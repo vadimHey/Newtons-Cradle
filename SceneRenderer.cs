@@ -3,8 +3,6 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using System;
-using System.IO;
 
 namespace NewtonsCradle
 {
@@ -17,7 +15,7 @@ namespace NewtonsCradle
         private int _tableVao, _tableVbo, _tableEbo;
         private int _tableTexture;
 
-        // 3D модель
+        // Model
         private ModelLoader _model = new ModelLoader();
         private Dictionary<string, Matrix4> _localTransforms = new();
         private bool _localTransformsBuilt = false;
@@ -32,7 +30,7 @@ namespace NewtonsCradle
             GL.ClearColor(0.85f, 0.9f, 0.95f, 1.0f);
             GL.Enable(EnableCap.DepthTest);
 
-            _camera = new OrbitCamera(new Vector3(-5.0f, -1.0f, 3.0f), Vector3.Zero, Size.X / (float)Size.Y);
+            _camera = new OrbitCamera(new Vector3(0, 0.6f, 3.0f), Vector3.Zero, Size.X / (float)Size.Y);
 
             // Шейдер
             _shaderProgram = ShaderUtils.CreateProgram("Shaders/vertex.glsl", "Shaders/fragment.glsl");
@@ -40,7 +38,7 @@ namespace NewtonsCradle
 
             // Стол
             CreateTable();
-            _tableTexture = TextureUtils.LoadTextureFallback(Path.Combine("Assets", "wood.jpg"));
+            _tableTexture = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
 
             // Загрузка модели
             string modelPath = Path.Combine("Assets", "newtons_cradle.glb");
@@ -50,27 +48,58 @@ namespace NewtonsCradle
             }
             else
             {
-                Console.WriteLine("Loading model: " + modelPath);
                 _model.LoadFromFile(modelPath);
 
                 if (_model.Scene != null)
                 {
+                    // Локальные трансформы
                     _model.BuildLocalTransforms(_model.Scene.RootNode, _localTransforms);
                     _localTransformsBuilt = true;
 
-                    // Центрирование камеры по AABB
+                    // Подмена текстур по названию мешей
+                    try
+                    {
+                        // Загружаем материалы для столешницы и маятника
+                        int woodTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "wood.jpg"));
+                        int woodTableTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
+                        int metalTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "metal.jpg"));
+
+                        if (_model.Meshes != null && _model.Meshes.Count > 0)
+                        {
+                            for (int i = 0; i < _model.Meshes.Count; i++)
+                            {
+                                var mesh = _model.Meshes[i];
+                                // допустим первые 3 меша — основа, остальные — металлические
+                                if (i < 1)
+                                    mesh.TextureId = woodTableTex;
+                                else if (i == 2)
+                                    mesh.TextureId = woodTex;
+                                else
+                                    mesh.TextureId = metalTex;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("⚠️ _model.Meshes пуст — возможно, модель не содержит мешей?");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Texture override failed: " + ex.Message);
+                    }
+
+
+                    // Камера по центру модели
                     if (_model.GetBoundingBoxWorld(out var bboxMin, out var bboxMax))
                     {
                         var center = (bboxMin + bboxMax) * 0.5f;
                         var diag = (bboxMax - bboxMin).Length;
                         _camera.Target = center;
                         _camera.Radius = Math.Max(0.5f, diag * 0.9f);
-                        Console.WriteLine($"Model bounds center: {center}, diag: {diag:F3}, camera radius set to {_camera.Radius:F3}");
                     }
                 }
             }
 
-            GL.UseProgram(_shaderProgram);
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
         }
@@ -125,9 +154,9 @@ namespace NewtonsCradle
                              Matrix4.CreateTranslation(0f, -4.3f, -4f);
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
             GL.BindVertexArray(_tableVao);
-            GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
+            GL.DrawElements(OpenTK.Graphics.OpenGL4.PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
 
-            // Модель (статическая)
+            // Модель (каждый меш со своей текстурой)
             if (_model.Scene != null)
             {
                 if (!_localTransformsBuilt)
@@ -136,7 +165,7 @@ namespace NewtonsCradle
                     _localTransformsBuilt = true;
                 }
 
-                _model.Draw(_shaderProgram, _localTransforms, 1);
+                _model.Draw(_shaderProgram, _localTransforms, 0);
             }
 
             SwapBuffers();
@@ -144,43 +173,35 @@ namespace NewtonsCradle
 
         private void CreateTable()
         {
-            // Кубический стол: ширина X=2, высота Y=0.12, глубина Z=1.5
-            float[] vertices = 
-            {
+            float[] vertices = {
                 // positions          // normals         // texcoords
-                -0.5f,-0.5f,-0.5f,   0,0,-1,           0,0,
-                 0.5f,-0.5f,-0.5f,   0,0,-1,           1,0,
-                 0.5f, 0.5f,-0.5f,   0,0,-1,           1,1,
-                -0.5f, 0.5f,-0.5f,   0,0,-1,           0,1,
-
-                -0.5f,-0.5f, 0.5f,   0,0,1,            0,0,
-                 0.5f,-0.5f, 0.5f,   0,0,1,            1,0,
-                 0.5f, 0.5f, 0.5f,   0,0,1,            1,1,
-                -0.5f, 0.5f, 0.5f,   0,0,1,            0,1,
-
-                -0.5f, 0.5f, 0.5f,  -1,0,0,            1,0,
-                -0.5f, 0.5f,-0.5f,  -1,0,0,            1,1,
-                -0.5f,-0.5f,-0.5f,  -1,0,0,            0,1,
-                -0.5f,-0.5f, 0.5f,  -1,0,0,            0,0,
-
-                 0.5f, 0.5f, 0.5f,   1,0,0,            1,0,
-                 0.5f, 0.5f,-0.5f,   1,0,0,            1,1,
-                 0.5f,-0.5f,-0.5f,   1,0,0,            0,1,
-                 0.5f,-0.5f, 0.5f,   1,0,0,            0,0,
-
-                -0.5f,-0.5f,-0.5f,   0,-1,0,           0,1,
-                 0.5f,-0.5f,-0.5f,   0,-1,0,           1,1,
-                 0.5f,-0.5f, 0.5f,   0,-1,0,           1,0,
-                -0.5f,-0.5f, 0.5f,   0,-1,0,           0,0,
-
-                -0.5f, 0.5f,-0.5f,   0,1,0,            0,1,
-                 0.5f, 0.5f,-0.5f,   0,1,0,            1,1,
-                 0.5f, 0.5f, 0.5f,   0,1,0,            1,0,
-                -0.5f, 0.5f, 0.5f,   0,1,0,            0,0,
+                -0.5f,-0.5f,-0.5f,  0,0,-1,  0,0,
+                 0.5f,-0.5f,-0.5f,  0,0,-1,  1,0,
+                 0.5f, 0.5f,-0.5f,  0,0,-1,  1,1,
+                -0.5f, 0.5f,-0.5f,  0,0,-1,  0,1,
+                -0.5f,-0.5f, 0.5f,  0,0,1,   0,0,
+                 0.5f,-0.5f, 0.5f,  0,0,1,   1,0,
+                 0.5f, 0.5f, 0.5f,  0,0,1,   1,1,
+                -0.5f, 0.5f, 0.5f,  0,0,1,   0,1,
+                -0.5f, 0.5f, 0.5f, -1,0,0,   1,0,
+                -0.5f, 0.5f,-0.5f, -1,0,0,   1,1,
+                -0.5f,-0.5f,-0.5f, -1,0,0,   0,1,
+                -0.5f,-0.5f, 0.5f, -1,0,0,   0,0,
+                 0.5f, 0.5f, 0.5f,  1,0,0,   1,0,
+                 0.5f, 0.5f,-0.5f,  1,0,0,   1,1,
+                 0.5f,-0.5f,-0.5f,  1,0,0,   0,1,
+                 0.5f,-0.5f, 0.5f,  1,0,0,   0,0,
+                -0.5f,-0.5f,-0.5f, 0,-1,0,   0,1,
+                 0.5f,-0.5f,-0.5f, 0,-1,0,   1,1,
+                 0.5f,-0.5f, 0.5f, 0,-1,0,   1,0,
+                -0.5f,-0.5f, 0.5f, 0,-1,0,   0,0,
+                -0.5f, 0.5f,-0.5f, 0,1,0,    0,1,
+                 0.5f, 0.5f,-0.5f, 0,1,0,    1,1,
+                 0.5f, 0.5f, 0.5f, 0,1,0,    1,0,
+                -0.5f, 0.5f, 0.5f, 0,1,0,    0,0,
             };
 
-            uint[] indices = 
-            {
+            uint[] indices = {
                 0,1,2, 2,3,0,
                 4,5,6, 6,7,4,
                 8,9,10, 10,11,8,
@@ -206,7 +227,6 @@ namespace NewtonsCradle
             GL.EnableVertexAttribArray(1);
             GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
             GL.EnableVertexAttribArray(2);
-
             GL.BindVertexArray(0);
         }
     }

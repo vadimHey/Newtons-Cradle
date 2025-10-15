@@ -11,7 +11,10 @@ namespace NewtonsCradle
     public class ModelLoader
     {
         public Assimp.Scene Scene { get; private set; }
-        private List<MeshGL> _meshes = new();
+        // Список всех OpenGL-мешей
+        private readonly List<MeshGL> _meshes = new();
+
+        public IReadOnlyList<MeshGL> Meshes => _meshes;
 
         public void LoadFromFile(string path)
         {
@@ -218,7 +221,7 @@ namespace NewtonsCradle
     #endregion
 
     #region Nested MeshGL
-    class MeshGL
+    public class MeshGL
     {
         public int Vao;
         public int Vbo;
@@ -292,66 +295,64 @@ namespace NewtonsCradle
                 if (matIndex >= 0 && ParentScene != null && ParentScene.Materials.Count > matIndex)
                 {
                     var mat = ParentScene.Materials[matIndex];
-                    if (mat.GetMaterialTextureCount(TextureType.Diffuse) > 0)
+                    try
                     {
-                        mat.GetMaterialTexture(TextureType.Diffuse, 0, out TextureSlot slot);
-                        string path = slot.FilePath;
-                        if (!string.IsNullOrEmpty(path))
+                        TextureSlot slot;
+                        bool found = false;
+
+                        // 1️⃣ Diffuse — классический путь
+                        if (mat.GetMaterialTextureCount(TextureType.Diffuse) > 0)
                         {
-                            if (path.StartsWith("*"))
+                            mat.GetMaterialTexture(TextureType.Diffuse, 0, out slot);
+                            found = true;
+                        }
+                        // 2️⃣ PBR пути (glTF и др.)
+                        else if (mat.GetMaterialTextureCount((TextureType)12) > 0) // 12 = BaseColor для glTF
+                        {
+                            mat.GetMaterialTexture((TextureType)12, 0, out slot);
+                            found = true;
+                        }
+                        else if (mat.GetMaterialTextureCount(TextureType.Unknown) > 0)
+                        {
+                            mat.GetMaterialTexture(TextureType.Unknown, 0, out slot);
+                            found = true;
+                        }
+                        else
+                        {
+                            slot = new TextureSlot(); // пустой
+                        }
+
+                        if (found)
+                        {
+                            string path = slot.FilePath;
+                            if (!string.IsNullOrEmpty(path))
                             {
-                                int texIndex = int.Parse(path.Substring(1));
-                                if (ParentScene.HasTextures && ParentScene.Textures.Count > texIndex)
+                                if (path.StartsWith("*"))
                                 {
-                                    var embedded = ParentScene.Textures[texIndex];
-                                    // CompressedData (byte[]) — обычный случай
-                                    if (embedded.CompressedData != null && embedded.CompressedData.Length > 0)
+                                    int texIndex = int.Parse(path.Substring(1));
+                                    if (ParentScene.HasTextures && ParentScene.Textures.Count > texIndex)
                                     {
-                                        TextureId = TextureUtils.LoadTextureFromMemory(embedded.CompressedData);
-                                    }
-                                    // NonCompressedData — Assimp.Texel[] — нужно конвертировать в Bitmap
-                                    else if (embedded.HasNonCompressedData && embedded.NonCompressedData != null)
-                                    {
-                                        try
+                                        var embedded = ParentScene.Textures[texIndex];
+                                        if (embedded.CompressedData != null && embedded.CompressedData.Length > 0)
                                         {
-                                            var texels = embedded.NonCompressedData; // Assimp.Texel[]
-                                            int w = embedded.Width > 0 ? embedded.Width : 1;
-                                            int h = embedded.Height > 0 ? embedded.Height : 1;
-                                            using (var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-                                            {
-                                                int idx = 0;
-                                                for (int yy = 0; yy < h; yy++)
-                                                {
-                                                    for (int xx = 0; xx < w; xx++)
-                                                    {
-                                                        var t = texels[idx++]; // t is Assimp.Texel
-                                                                               // Texel has channels R,G,B,A (bytes) — формируем Color
-                                                        Color c = Color.FromArgb(t.A, t.R, t.G, t.B);
-                                                        bmp.SetPixel(xx, yy, c);
-                                                    }
-                                                }
-                                                // Сохраним в поток PNG и загрузим как CompressedData
-                                                using (var ms = new MemoryStream())
-                                                {
-                                                    bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                                                    TextureId = TextureUtils.LoadTextureFromMemory(ms.ToArray());
-                                                }
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            Console.WriteLine("Failed to create texture from NonCompressedData: " + ex.Message);
+                                            TextureId = TextureUtils.LoadTextureFromMemory(embedded.CompressedData);
                                         }
                                     }
                                 }
-                            }
-                            else
-                            {
-                                var candidate = Path.Combine("Assets", Path.GetFileName(path));
-                                if (File.Exists(candidate)) TextureId = TextureUtils.LoadTextureStandalone(candidate);
+                                else
+                                {
+                                    var candidate = Path.Combine("Assets", Path.GetFileName(path));
+                                    if (File.Exists(candidate))
+                                        TextureId = TextureUtils.LoadTextureStandalone(candidate);
+                                }
                             }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Texture load error: " + ex.Message);
+                    }
+
                 }
             }
             catch (Exception ex)
