@@ -121,7 +121,8 @@ namespace NewtonsCradle
             // Стол
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, _tableTexture);
-            var tableModel = Matrix4.CreateScale(2.0f, 0.12f, 1.5f) * Matrix4.CreateTranslation(0, -0.4f, 0);
+            var tableModel = Matrix4.CreateScale(33.0f, 3.6f, 44.0f) *
+                             Matrix4.CreateTranslation(0f, -4.3f, -4f);
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
             GL.BindVertexArray(_tableVao);
             GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
@@ -135,7 +136,7 @@ namespace NewtonsCradle
                     _localTransformsBuilt = true;
                 }
 
-                _model.Draw(_shaderProgram, _localTransforms, _tableTexture);
+                _model.Draw(_shaderProgram, _localTransforms, 1);
             }
 
             SwapBuffers();
@@ -143,10 +144,50 @@ namespace NewtonsCradle
 
         private void CreateTable()
         {
-            float[] vertices = { /* позиции, нормали, UV */ 
-                // ... вставь свои данные как в оригинале ...
+            // Кубический стол: ширина X=2, высота Y=0.12, глубина Z=1.5
+            float[] vertices = 
+            {
+                // positions          // normals         // texcoords
+                -0.5f,-0.5f,-0.5f,   0,0,-1,           0,0,
+                 0.5f,-0.5f,-0.5f,   0,0,-1,           1,0,
+                 0.5f, 0.5f,-0.5f,   0,0,-1,           1,1,
+                -0.5f, 0.5f,-0.5f,   0,0,-1,           0,1,
+
+                -0.5f,-0.5f, 0.5f,   0,0,1,            0,0,
+                 0.5f,-0.5f, 0.5f,   0,0,1,            1,0,
+                 0.5f, 0.5f, 0.5f,   0,0,1,            1,1,
+                -0.5f, 0.5f, 0.5f,   0,0,1,            0,1,
+
+                -0.5f, 0.5f, 0.5f,  -1,0,0,            1,0,
+                -0.5f, 0.5f,-0.5f,  -1,0,0,            1,1,
+                -0.5f,-0.5f,-0.5f,  -1,0,0,            0,1,
+                -0.5f,-0.5f, 0.5f,  -1,0,0,            0,0,
+
+                 0.5f, 0.5f, 0.5f,   1,0,0,            1,0,
+                 0.5f, 0.5f,-0.5f,   1,0,0,            1,1,
+                 0.5f,-0.5f,-0.5f,   1,0,0,            0,1,
+                 0.5f,-0.5f, 0.5f,   1,0,0,            0,0,
+
+                -0.5f,-0.5f,-0.5f,   0,-1,0,           0,1,
+                 0.5f,-0.5f,-0.5f,   0,-1,0,           1,1,
+                 0.5f,-0.5f, 0.5f,   0,-1,0,           1,0,
+                -0.5f,-0.5f, 0.5f,   0,-1,0,           0,0,
+
+                -0.5f, 0.5f,-0.5f,   0,1,0,            0,1,
+                 0.5f, 0.5f,-0.5f,   0,1,0,            1,1,
+                 0.5f, 0.5f, 0.5f,   0,1,0,            1,0,
+                -0.5f, 0.5f, 0.5f,   0,1,0,            0,0,
             };
-            uint[] indices = { /* ... вставь свои данные ... */ };
+
+            uint[] indices = 
+            {
+                0,1,2, 2,3,0,
+                4,5,6, 6,7,4,
+                8,9,10, 10,11,8,
+                12,13,14, 14,15,12,
+                16,17,18, 18,19,16,
+                20,21,22, 22,23,20
+            };
 
             _tableVao = GL.GenVertexArray();
             _tableVbo = GL.GenBuffer();
