@@ -20,6 +20,13 @@ namespace NewtonsCradle
         private Dictionary<string, Matrix4> _localTransforms = new();
         private bool _localTransformsBuilt = false;
 
+        // Сохраняем исходные матрицы всех узлов модели
+        private Dictionary<string, Matrix4> _originalTransforms = new Dictionary<string, Matrix4>();
+
+        private int _activePendulum = 0; // 0 — левый, 1 — правый
+        private float _pendulumTime = 0f;
+        private const float swingDuration = 1f; // секунда качания одного шара
+
         private Vector3 _lightPos = new Vector3(0.5f, 2.0f, 2.0f);
 
         public SceneRenderer(GameWindowSettings g, NativeWindowSettings n) : base(g, n) { }
@@ -41,7 +48,7 @@ namespace NewtonsCradle
             _tableTexture = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
 
             // Загрузка модели
-            string modelPath = Path.Combine("Assets", "newtons_cradle.glb");
+            string modelPath = Path.Combine("Assets", "newtons_cradle3.glb");
             if (!File.Exists(modelPath))
             {
                 Console.WriteLine("Model not found: " + modelPath);
@@ -54,6 +61,11 @@ namespace NewtonsCradle
                 {
                     // Локальные трансформы
                     _model.BuildLocalTransforms(_model.Scene.RootNode, _localTransforms);
+                    foreach (var kv in _localTransforms)
+                    {
+                        _originalTransforms[kv.Key] = kv.Value;
+                        _localTransforms[kv.Key] = kv.Value;
+                    }
                     _localTransformsBuilt = true;
 
                     // Подмена текстур по названию мешей
@@ -80,7 +92,7 @@ namespace NewtonsCradle
                         }
                         else
                         {
-                            Console.WriteLine("⚠️ _model.Meshes пуст — возможно, модель не содержит мешей?");
+                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей?");
                         }
                     }
                     catch (Exception ex)
@@ -102,6 +114,26 @@ namespace NewtonsCradle
 
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
+
+            Console.WriteLine("=== Mesh list ===");
+            for (int i = 0; i < _model.Meshes.Count; i++)
+            {
+                var mesh = _model.Meshes[i];
+                string name = mesh.SourceMesh?.Name ?? "(no name)";
+                Console.WriteLine($"[{i}] {name}");
+            }
+
+            Console.WriteLine("=== Scene nodes ===");
+            if (_model.Scene?.RootNode != null)
+            {
+                void PrintNodes(Assimp.Node node, string indent)
+                {
+                    Console.WriteLine($"{indent}- {node.Name}");
+                    foreach (var child in node.Children)
+                        PrintNodes(child, indent + "  ");
+                }
+                PrintNodes(_model.Scene.RootNode, "");
+            }
         }
 
         protected override void OnUnload()
@@ -141,6 +173,7 @@ namespace NewtonsCradle
 
             GL.UseProgram(_shaderProgram);
 
+            // Матрицы камеры
             var view = _camera.GetViewMatrix();
             var proj = _camera.GetProjectionMatrix();
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "view"), false, ref view);
@@ -152,24 +185,90 @@ namespace NewtonsCradle
             GL.BindTexture(TextureTarget.Texture2D, _tableTexture);
             var tableModel = Matrix4.CreateScale(33.0f, 3.6f, 44.0f) *
                              Matrix4.CreateTranslation(0f, -4.3f, -4f);
-            GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
-            GL.BindVertexArray(_tableVao);
-            GL.DrawElements(OpenTK.Graphics.OpenGL4.PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
+            //GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
+            //GL.BindVertexArray(_tableVao);
+            //GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
 
-            // Модель (каждый меш со своей текстурой)
             if (_model.Scene != null)
             {
-                if (!_localTransformsBuilt)
+                // === Таймер ===
+                _pendulumTime += (float)e.Time;
+                if (_pendulumTime > swingDuration)
                 {
-                    _model.BuildLocalTransforms(_model.Scene.RootNode, _localTransforms);
-                    _localTransformsBuilt = true;
+                    _pendulumTime = 0f;
+                    _activePendulum = 1 - _activePendulum; // переключаем левый/правый
+                }
+
+                // === Настройка качания ===
+                float t = _pendulumTime / swingDuration; // от 0 до 1
+                float swing = -MathF.Sin(t * MathF.PI);   // движение туда-обратно
+                float baseAngle = 0.3f;                 // макс. угол (17°)
+
+                // === Группы маятников ===
+                string[][] pendulums =
+                {
+                    new[] { "polySurface19_Hook_0", "polySurface5_Ball_0", "polySurface10_Wire_0" }, // левый
+                    new[] { "polySurface18_Hook_0", "polySurface4_Ball_0", "polySurface9_Wire_0" },  // 2
+                    new[] { "polySurface17_Hook_0", "polySurface3_Ball_0", "polySurface7_Wire_0" },  // 3 (центр)
+                    new[] { "polySurface16_Hook_0", "polySurface2_Ball_0", "polySurface8_Wire_0" },  // 4
+                    new[] { "polySurface20_Hook_0", "polySurface1_Ball_0", "polySurface6_Wire_0" },  // правый
+                };
+
+                // === Сброс всех трансформов ===
+                foreach (var kv in _originalTransforms)
+                    _localTransforms[kv.Key] = kv.Value;
+
+                // === Рассчёт углов качания ===
+                float[] angles = new float[5];
+
+                if (_activePendulum == 0)
+                {
+                    // качается левый шар
+                    angles[0] = baseAngle * swing;
+                    angles[4] = 0f;
+                }
+                else
+                {
+                    // качается правый шар
+                    angles[0] = 0f;
+                    angles[4] = -baseAngle * swing;
+                }
+
+                // слегка двигаем средние при столкновении
+                angles[1] = MathF.Sin(t * MathF.PI) * 0.05f;
+                angles[2] = MathF.Sin(t * MathF.PI) * 0.03f;
+                angles[3] = MathF.Sin(t * MathF.PI) * 0.05f;
+
+                // === Применяем трансформации ===
+                for (int p = 0; p < pendulums.Length; p++)
+                {
+                    float localAngle = angles[p];
+                    if (MathF.Abs(localAngle) < 1e-4f) continue;
+
+                    foreach (string nodeName in pendulums[p])
+                    {
+                        if (_originalTransforms.TryGetValue(nodeName, out var baseMatrix))
+                        {
+                            // pivot — точка подвеса (крюк)
+                            Vector3 pivot = _originalTransforms[pendulums[p][0]].ExtractTranslation();
+
+                            var rotation =
+                                Matrix4.CreateTranslation(-pivot) *
+                                Matrix4.CreateFromAxisAngle(Vector3.UnitZ, localAngle) * // ось качания
+                                Matrix4.CreateTranslation(pivot);
+
+                            _localTransforms[nodeName] = rotation * baseMatrix;
+                        }
+                    }
                 }
 
                 _model.Draw(_shaderProgram, _localTransforms, 0);
             }
 
+
             SwapBuffers();
         }
+
 
         private void CreateTable()
         {

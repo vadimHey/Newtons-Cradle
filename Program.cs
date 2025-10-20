@@ -16,9 +16,5 @@ class Program
 
         var window = new SceneRenderer(gws, nws);
         window.Run();
-
-        var p = Path.Combine("Assets", "woodTable.jpg");
-        Console.WriteLine($"Exists={File.Exists(p)}, length={(File.Exists(p) ? new FileInfo(p).Length.ToString() : "n/a")}, full={Path.GetFullPath(p)}");
-
     }
 }
