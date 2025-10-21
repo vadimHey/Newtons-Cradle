@@ -22,6 +22,8 @@ namespace NewtonsCradle
 
         // Сохраняем исходные матрицы всех узлов модели
         private Dictionary<string, Matrix4> _originalTransforms = new Dictionary<string, Matrix4>();
+        // Pivot-точки для каждого подвеса (Hook)
+        private readonly Dictionary<string, Vector3> _pivotWorlds = new();
 
         private int _activePendulum = 0; // 0 — левый, 1 — правый
         private float _pendulumTime = 0f;
@@ -48,7 +50,7 @@ namespace NewtonsCradle
             _tableTexture = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
 
             // Загрузка модели
-            string modelPath = Path.Combine("Assets", "newtons_cradle3.glb");
+            string modelPath = Path.Combine("Assets", "newtons_cradle.glb");
             if (!File.Exists(modelPath))
             {
                 Console.WriteLine("Model not found: " + modelPath);
@@ -59,6 +61,17 @@ namespace NewtonsCradle
 
                 if (_model.Scene != null)
                 {
+                    var world = BuildWorldTransformsFromOriginal();
+                    foreach (var name in new[]
+                    {
+                        "polySurface19_Hook_0", "polySurface18_Hook_0",
+                        "polySurface17_Hook_0", "polySurface16_Hook_0",
+                        "polySurface20_Hook_0"
+                    })
+                    {
+                        _pivotWorlds[name] = ComputeNodePivotWorld(name, world);
+                    }
+
                     // Локальные трансформы
                     _model.BuildLocalTransforms(_model.Scene.RootNode, _localTransforms);
                     foreach (var kv in _localTransforms)
@@ -191,71 +204,62 @@ namespace NewtonsCradle
 
             if (_model.Scene != null)
             {
-                // === Таймер ===
+                // Обновление таймера и вычисление angle
                 _pendulumTime += (float)e.Time;
-                if (_pendulumTime > swingDuration)
-                {
-                    _pendulumTime = 0f;
-                    _activePendulum = 1 - _activePendulum; // переключаем левый/правый
+                if (_pendulumTime > swingDuration) 
+                { 
+                    _pendulumTime = 0f; 
+                    _activePendulum = 1 - _activePendulum; 
                 }
 
-                // === Настройка качания ===
-                float t = _pendulumTime / swingDuration; // от 0 до 1
-                float swing = -MathF.Sin(t * MathF.PI);   // движение туда-обратно
-                float baseAngle = 0.3f;                 // макс. угол (17°)
+                float t = _pendulumTime / swingDuration;
 
-                // === Группы маятников ===
-                string[][] pendulums =
-                {
-                    new[] { "polySurface19_Hook_0", "polySurface5_Ball_0", "polySurface10_Wire_0" }, // левый
-                    new[] { "polySurface18_Hook_0", "polySurface4_Ball_0", "polySurface9_Wire_0" },  // 2
-                    new[] { "polySurface17_Hook_0", "polySurface3_Ball_0", "polySurface7_Wire_0" },  // 3 (центр)
-                    new[] { "polySurface16_Hook_0", "polySurface2_Ball_0", "polySurface8_Wire_0" },  // 4
-                    new[] { "polySurface20_Hook_0", "polySurface1_Ball_0", "polySurface6_Wire_0" },  // правый
-                };
+                float swingFactor = -MathF.Sin(t * MathF.PI);
+                float baseAngle = 0.3f;
 
-                // === Сброс всех трансформов ===
-                foreach (var kv in _originalTransforms)
-                    _localTransforms[kv.Key] = kv.Value;
-
-                // === Рассчёт углов качания ===
                 float[] angles = new float[5];
+                if (_activePendulum == 0) 
+                    angles[0] = baseAngle * swingFactor; 
+                else 
+                    angles[4] = -baseAngle * swingFactor;
 
-                if (_activePendulum == 0)
-                {
-                    // качается левый шар
-                    angles[0] = baseAngle * swing;
-                    angles[4] = 0f;
-                }
-                else
-                {
-                    // качается правый шар
-                    angles[0] = 0f;
-                    angles[4] = -baseAngle * swing;
-                }
-
-                // слегка двигаем средние при столкновении
-                angles[1] = MathF.Sin(t * MathF.PI) * 0.05f;
-                angles[2] = MathF.Sin(t * MathF.PI) * 0.03f;
+                angles[1] = MathF.Sin(t * MathF.PI) * 0.05f; 
+                angles[2] = MathF.Sin(t * MathF.PI) * 0.03f; 
                 angles[3] = MathF.Sin(t * MathF.PI) * 0.05f;
 
-                // === Применяем трансформации ===
+                string[][] pendulums =
+                {
+                    new[] { "polySurface19_Hook_0", "polySurface5_Ball_0", "polySurface10_Wire_0" },
+                    new[] { "polySurface18_Hook_0", "polySurface4_Ball_0", "polySurface9_Wire_0" },
+                    new[] { "polySurface17_Hook_0", "polySurface3_Ball_0", "polySurface7_Wire_0" },
+                    new[] { "polySurface16_Hook_0", "polySurface2_Ball_0", "polySurface8_Wire_0" },
+                    new[] { "polySurface20_Hook_0", "polySurface1_Ball_0", "polySurface6_Wire_0" },
+                };
+
+                foreach (var kv in _originalTransforms) 
+                    _localTransforms[kv.Key] = kv.Value;
+
+                var worldTransforms = BuildWorldTransformsFromOriginal();
+
+                // При вычислении поворота для каждого подвеса:
                 for (int p = 0; p < pendulums.Length; p++)
                 {
                     float localAngle = angles[p];
-                    if (MathF.Abs(localAngle) < 1e-4f) continue;
+                    if (MathF.Abs(localAngle) < 1e-5f) 
+                        continue;
+
+                    string hookNodeName = pendulums[p][0];
+                    if (!_pivotWorlds.TryGetValue(hookNodeName, out var pivotWorld))
+                        pivotWorld = ComputeNodePivotWorld(hookNodeName, worldTransforms);
 
                     foreach (string nodeName in pendulums[p])
                     {
                         if (_originalTransforms.TryGetValue(nodeName, out var baseMatrix))
                         {
-                            // pivot — точка подвеса (крюк)
-                            Vector3 pivot = _originalTransforms[pendulums[p][0]].ExtractTranslation();
-
                             var rotation =
-                                Matrix4.CreateTranslation(-pivot) *
-                                Matrix4.CreateFromAxisAngle(Vector3.UnitZ, localAngle) * // ось качания
-                                Matrix4.CreateTranslation(pivot);
+                                Matrix4.CreateTranslation(-pivotWorld) *
+                                Matrix4.CreateFromAxisAngle(Vector3.UnitZ, localAngle) *
+                                Matrix4.CreateTranslation(pivotWorld);
 
                             _localTransforms[nodeName] = rotation * baseMatrix;
                         }
@@ -265,39 +269,37 @@ namespace NewtonsCradle
                 _model.Draw(_shaderProgram, _localTransforms, 0);
             }
 
-
             SwapBuffers();
         }
-
 
         private void CreateTable()
         {
             float[] vertices = {
-                // positions          // normals         // texcoords
-                -0.5f,-0.5f,-0.5f,  0,0,-1,  0,0,
-                 0.5f,-0.5f,-0.5f,  0,0,-1,  1,0,
-                 0.5f, 0.5f,-0.5f,  0,0,-1,  1,1,
-                -0.5f, 0.5f,-0.5f,  0,0,-1,  0,1,
-                -0.5f,-0.5f, 0.5f,  0,0,1,   0,0,
-                 0.5f,-0.5f, 0.5f,  0,0,1,   1,0,
-                 0.5f, 0.5f, 0.5f,  0,0,1,   1,1,
-                -0.5f, 0.5f, 0.5f,  0,0,1,   0,1,
-                -0.5f, 0.5f, 0.5f, -1,0,0,   1,0,
-                -0.5f, 0.5f,-0.5f, -1,0,0,   1,1,
-                -0.5f,-0.5f,-0.5f, -1,0,0,   0,1,
-                -0.5f,-0.5f, 0.5f, -1,0,0,   0,0,
-                 0.5f, 0.5f, 0.5f,  1,0,0,   1,0,
-                 0.5f, 0.5f,-0.5f,  1,0,0,   1,1,
-                 0.5f,-0.5f,-0.5f,  1,0,0,   0,1,
-                 0.5f,-0.5f, 0.5f,  1,0,0,   0,0,
-                -0.5f,-0.5f,-0.5f, 0,-1,0,   0,1,
-                 0.5f,-0.5f,-0.5f, 0,-1,0,   1,1,
-                 0.5f,-0.5f, 0.5f, 0,-1,0,   1,0,
-                -0.5f,-0.5f, 0.5f, 0,-1,0,   0,0,
-                -0.5f, 0.5f,-0.5f, 0,1,0,    0,1,
-                 0.5f, 0.5f,-0.5f, 0,1,0,    1,1,
-                 0.5f, 0.5f, 0.5f, 0,1,0,    1,0,
-                -0.5f, 0.5f, 0.5f, 0,1,0,    0,0,
+                // positions            // normals  // texcoords
+                -0.5f,-0.5f,-0.5f,      0,0,-1,     0,0,
+                 0.5f,-0.5f,-0.5f,      0,0,-1,     1,0,
+                 0.5f, 0.5f,-0.5f,      0,0,-1,     1,1,
+                -0.5f, 0.5f,-0.5f,      0,0,-1,     0,1,
+                -0.5f,-0.5f, 0.5f,      0,0,1,      0,0,
+                 0.5f,-0.5f, 0.5f,      0,0,1,      1,0,
+                 0.5f, 0.5f, 0.5f,      0,0,1,      1,1,
+                -0.5f, 0.5f, 0.5f,      0,0,1,      0,1,
+                -0.5f, 0.5f, 0.5f,      -1,0,0,     1,0,
+                -0.5f, 0.5f,-0.5f,      -1,0,0,     1,1,
+                -0.5f,-0.5f,-0.5f,      -1,0,0,     0,1,
+                -0.5f,-0.5f, 0.5f,      -1,0,0,     0,0,
+                 0.5f, 0.5f, 0.5f,      1,0,0,      1,0,
+                 0.5f, 0.5f,-0.5f,      1,0,0,      1,1,
+                 0.5f,-0.5f,-0.5f,      1,0,0,      0,1,
+                 0.5f,-0.5f, 0.5f,      1,0,0,      0,0,
+                -0.5f,-0.5f,-0.5f,      0,-1,0,     0,1,
+                 0.5f,-0.5f,-0.5f,      0,-1,0,     1,1,
+                 0.5f,-0.5f, 0.5f,      0,-1,0,     1,0,
+                -0.5f,-0.5f, 0.5f,      0,-1,0,     0,0,
+                -0.5f, 0.5f,-0.5f,      0,1,0,      0,1,
+                 0.5f, 0.5f,-0.5f,      0,1,0,      1,1,
+                 0.5f, 0.5f, 0.5f,      0,1,0,      1,0,
+                -0.5f, 0.5f, 0.5f,      0,1,0,      0,0,
             };
 
             uint[] indices = {
@@ -327,6 +329,93 @@ namespace NewtonsCradle
             GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
             GL.EnableVertexAttribArray(2);
             GL.BindVertexArray(0);
+        }
+
+        // 1) Построить мировые матрицы всех узлов на базе _originalTransforms (или node.Transform если нет)
+        private Dictionary<string, Matrix4> BuildWorldTransformsFromOriginal()
+        {
+            var world = new Dictionary<string, Matrix4>();
+            if (_model?.Scene?.RootNode == null) return world;
+
+            void Walk(Assimp.Node node, Matrix4 parentWorld)
+            {
+                Matrix4 local;
+                if (!_originalTransforms.TryGetValue(node.Name, out local))
+                {
+                    var m = node.Transform;
+                    local = new Matrix4(
+                        m.A1, m.B1, m.C1, m.D1,
+                        m.A2, m.B2, m.C2, m.D2,
+                        m.A3, m.B3, m.C3, m.D3,
+                        m.A4, m.B4, m.C4, m.D4
+                    );
+                }
+
+                var curWorld = parentWorld * local;
+                world[node.Name] = curWorld;
+
+                foreach (var ch in node.Children) Walk(ch, curWorld);
+            }
+
+            Walk(_model.Scene.RootNode, Matrix4.Identity);
+            return world;
+        }
+
+        // 2) Для заданного узла вычислить pivot как среднюю позицию вершин мешей этого узла (в мировых координатах).
+        private Vector3 ComputeNodePivotWorld(string nodeName, Dictionary<string, Matrix4> worldTransforms)
+        {
+            var scene = _model.Scene;
+            if (scene == null || scene.RootNode == null) return Vector3.Zero;
+            // Найдём узел в дереве
+            Assimp.Node node = FindNodeByName(scene.RootNode, nodeName);
+            if (node == null)
+            {
+                // fallback: взять трансляцию из словаря, если есть
+                if (worldTransforms != null && worldTransforms.TryGetValue(nodeName, out var wm))
+                    return wm.ExtractTranslation();
+                return Vector3.Zero;
+            }
+
+            // Берём мировую матрицу узла (если нет — Identity)
+            Matrix4 world = Matrix4.Identity;
+            if (worldTransforms != null && worldTransforms.TryGetValue(node.Name, out var w)) world = w;
+
+            // Если узел содержит индексы мешей — усредним все вершины
+            long total = 0;
+            Vector3 sum = Vector3.Zero;
+
+            foreach (int mi in node.MeshIndices)
+            {
+                if (mi < 0 || mi >= scene.MeshCount) continue;
+                var mesh = scene.Meshes[mi];
+                for (int vi = 0; vi < mesh.VertexCount; vi++)
+                {
+                    var v = mesh.Vertices[vi];
+                    var v4 = new Vector4((float)v.X, (float)v.Y, (float)v.Z, 1.0f);
+                    // Преобразуем вершину мировой матрицей (row-major TransformRow — как в твоём GetBoundingBoxWorld)
+                    var vt = Vector4.TransformRow(v4, world);
+                    sum += new Vector3(vt.X, vt.Y, vt.Z);
+                    total++;
+                }
+            }
+
+            if (total > 0) return sum / (float)total;
+
+            // Если мешей нет или не получилось — fallback: использовать world translation
+            return world.ExtractTranslation();
+        }
+
+        // Вспомогательный поиск узла по имени
+        private Assimp.Node FindNodeByName(Assimp.Node root, string name)
+        {
+            if (root == null) return null;
+            if (string.Equals(root.Name, name, StringComparison.Ordinal)) return root;
+            foreach (var ch in root.Children)
+            {
+                var r = FindNodeByName(ch, name);
+                if (r != null) return r;
+            }
+            return null;
         }
     }
 }
