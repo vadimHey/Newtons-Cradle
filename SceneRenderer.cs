@@ -11,23 +11,26 @@ namespace NewtonsCradle
         private OrbitCamera _camera;
         private int _shaderProgram;
 
-        // Table
+        // Стол
         private int _tableVao, _tableVbo, _tableEbo;
         private int _tableTexture;
 
-        // Model
+        // Модель
         private ModelLoader _model = new ModelLoader();
         private Dictionary<string, Matrix4> _localTransforms = new();
+
         private bool _localTransformsBuilt = false;
+        private bool _animationRunning = false;
 
         // Сохраняем исходные матрицы всех узлов модели
         private Dictionary<string, Matrix4> _originalTransforms = new Dictionary<string, Matrix4>();
+
         // Pivot-точки для каждого подвеса (Hook)
         private readonly Dictionary<string, Vector3> _pivotWorlds = new();
 
-        private int _activePendulum = 0; // 0 — левый, 1 — правый
+        private int _activePendulum = 0;
         private float _pendulumTime = 0f;
-        private const float swingDuration = 1f; // секунда качания одного шара
+        private const float swingDuration = 1f;
 
         private Vector3 _lightPos = new Vector3(0.5f, 2.0f, 2.0f);
 
@@ -84,7 +87,6 @@ namespace NewtonsCradle
                     // Подмена текстур по названию мешей
                     try
                     {
-                        // Загружаем материалы для столешницы и маятника
                         int woodTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "wood.jpg"));
                         int woodTableTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
                         int metalTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "metal.jpg"));
@@ -94,7 +96,6 @@ namespace NewtonsCradle
                             for (int i = 0; i < _model.Meshes.Count; i++)
                             {
                                 var mesh = _model.Meshes[i];
-                                // допустим первые 3 меша — основа, остальные — металлические
                                 if (i < 1)
                                     mesh.TextureId = woodTableTex;
                                 else if (i == 2)
@@ -105,14 +106,13 @@ namespace NewtonsCradle
                         }
                         else
                         {
-                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей?");
+                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("Texture override failed: " + ex.Message);
+                        Console.WriteLine("Переопределение текстуры неуспешно " + ex.Message);
                     }
-
 
                     // Камера по центру модели
                     if (_model.GetBoundingBoxWorld(out var bboxMin, out var bboxMax))
@@ -128,7 +128,7 @@ namespace NewtonsCradle
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
 
-            Console.WriteLine("=== Mesh list ===");
+            Console.WriteLine("Mesh list");
             for (int i = 0; i < _model.Meshes.Count; i++)
             {
                 var mesh = _model.Meshes[i];
@@ -136,7 +136,7 @@ namespace NewtonsCradle
                 Console.WriteLine($"[{i}] {name}");
             }
 
-            Console.WriteLine("=== Scene nodes ===");
+            Console.WriteLine("Scene nodes");
             if (_model.Scene?.RootNode != null)
             {
                 void PrintNodes(Assimp.Node node, string indent)
@@ -177,6 +177,11 @@ namespace NewtonsCradle
                 _camera.Pitch -= md.Y * 0.2f;
             }
             _camera.Radius -= MouseState.ScrollDelta.Y * 0.5f;
+
+            if (KeyboardState.IsKeyPressed(Keys.Space))
+            {
+                _animationRunning = !_animationRunning;
+            }
         }
 
         protected override void OnRenderFrame(FrameEventArgs e)
@@ -205,7 +210,9 @@ namespace NewtonsCradle
             if (_model.Scene != null)
             {
                 // Обновление таймера и вычисление angle
-                _pendulumTime += (float)e.Time;
+                if (_animationRunning)
+                    _pendulumTime += (float)e.Time;
+
                 if (_pendulumTime > swingDuration) 
                 { 
                     _pendulumTime = 0f; 
@@ -225,7 +232,7 @@ namespace NewtonsCradle
 
                 angles[1] = MathF.Sin(t * MathF.PI) * 0.05f; 
                 angles[2] = MathF.Sin(t * MathF.PI) * 0.03f; 
-                angles[3] = MathF.Sin(t * MathF.PI) * 0.05f;
+                angles[3] = -MathF.Sin(t * MathF.PI) * 0.05f;
 
                 string[][] pendulums =
                 {
@@ -275,7 +282,7 @@ namespace NewtonsCradle
         private void CreateTable()
         {
             float[] vertices = {
-                // positions            // normals  // texcoords
+                // Позиции              // Нормали // texcoords
                 -0.5f,-0.5f,-0.5f,      0,0,-1,     0,0,
                  0.5f,-0.5f,-0.5f,      0,0,-1,     1,0,
                  0.5f, 0.5f,-0.5f,      0,0,-1,     1,1,
@@ -331,7 +338,7 @@ namespace NewtonsCradle
             GL.BindVertexArray(0);
         }
 
-        // 1) Построить мировые матрицы всех узлов на базе _originalTransforms (или node.Transform если нет)
+        // Построить мировые матрицы всех узлов на базе _originalTransforms
         private Dictionary<string, Matrix4> BuildWorldTransformsFromOriginal()
         {
             var world = new Dictionary<string, Matrix4>();
@@ -361,26 +368,22 @@ namespace NewtonsCradle
             return world;
         }
 
-        // 2) Для заданного узла вычислить pivot как среднюю позицию вершин мешей этого узла (в мировых координатах).
+        // Для заданного узла вычислить pivot как среднюю позицию вершин мешей этого узла
         private Vector3 ComputeNodePivotWorld(string nodeName, Dictionary<string, Matrix4> worldTransforms)
         {
             var scene = _model.Scene;
             if (scene == null || scene.RootNode == null) return Vector3.Zero;
-            // Найдём узел в дереве
             Assimp.Node node = FindNodeByName(scene.RootNode, nodeName);
             if (node == null)
             {
-                // fallback: взять трансляцию из словаря, если есть
                 if (worldTransforms != null && worldTransforms.TryGetValue(nodeName, out var wm))
                     return wm.ExtractTranslation();
                 return Vector3.Zero;
             }
 
-            // Берём мировую матрицу узла (если нет — Identity)
             Matrix4 world = Matrix4.Identity;
             if (worldTransforms != null && worldTransforms.TryGetValue(node.Name, out var w)) world = w;
 
-            // Если узел содержит индексы мешей — усредним все вершины
             long total = 0;
             Vector3 sum = Vector3.Zero;
 
@@ -392,7 +395,6 @@ namespace NewtonsCradle
                 {
                     var v = mesh.Vertices[vi];
                     var v4 = new Vector4((float)v.X, (float)v.Y, (float)v.Z, 1.0f);
-                    // Преобразуем вершину мировой матрицей (row-major TransformRow — как в твоём GetBoundingBoxWorld)
                     var vt = Vector4.TransformRow(v4, world);
                     sum += new Vector3(vt.X, vt.Y, vt.Z);
                     total++;
@@ -401,7 +403,6 @@ namespace NewtonsCradle
 
             if (total > 0) return sum / (float)total;
 
-            // Если мешей нет или не получилось — fallback: использовать world translation
             return world.ExtractTranslation();
         }
 
