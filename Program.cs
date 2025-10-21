@@ -11,7 +11,7 @@ class Program
         var nws = new NativeWindowSettings() 
         { 
             ClientSize = new Vector2i(1280, 720), 
-            Title = "Newton's Cradle" 
+            Title = "Маятник Ньютона на столе" 
         };
 
         var window = new SceneRenderer(gws, nws);

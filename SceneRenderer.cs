@@ -43,7 +43,7 @@ namespace NewtonsCradle
             GL.ClearColor(0.85f, 0.9f, 0.95f, 1.0f);
             GL.Enable(EnableCap.DepthTest);
 
-            _camera = new OrbitCamera(new Vector3(0, 0.6f, 3.0f), Vector3.Zero, Size.X / (float)Size.Y);
+            _camera = new OrbitCamera(Vector3.Zero, 2f, Size.X / (float)Size.Y, 7f);
 
             // Шейдер
             _shaderProgram = ShaderUtils.CreateProgram("Shaders/vertex.glsl", "Shaders/fragment.glsl");
@@ -166,20 +166,30 @@ namespace NewtonsCradle
         protected override void OnUpdateFrame(FrameEventArgs e)
         {
             base.OnUpdateFrame(e);
-            if (KeyboardState.IsKeyDown(Keys.Escape)) Close();
 
-            if (MouseState.IsButtonDown(MouseButton.Right))
-            {
-                var md = MouseState.Delta;
-                _camera.Yaw += md.X * 0.2f;
-                _camera.Pitch -= md.Y * 0.2f;
-            }
-            _camera.Radius -= MouseState.ScrollDelta.Y * 0.5f;
+            // Скорости вращения и приближения камеры
+            float rotationSpeed = 90f * (float)e.Time;  
+            float zoomSpeed = 5f * (float)e.Time;       
 
+            // Управление камерой
+            if (KeyboardState.IsKeyDown(Keys.Q))
+                _camera.RotateLeft(rotationSpeed);
+            if (KeyboardState.IsKeyDown(Keys.E))
+                _camera.RotateRight(rotationSpeed);
+
+            if (KeyboardState.IsKeyDown(Keys.Equal))
+                _camera.ZoomIn(zoomSpeed);
+            if (KeyboardState.IsKeyDown(Keys.Minus))
+                _camera.ZoomOut(zoomSpeed);
+
+            // Анимация на клавишу пробела
             if (KeyboardState.IsKeyPressed(Keys.Space))
             {
                 _animationRunning = !_animationRunning;
             }
+
+            // Закрытие окна
+            if (KeyboardState.IsKeyDown(Keys.Escape)) Close();
         }
 
         protected override void OnRenderFrame(FrameEventArgs e)
