@@ -11,9 +11,10 @@ namespace NewtonsCradle
         private OrbitCamera _camera;
         private int _shaderProgram;
 
-        // Стол
+        // Стол и его ножки
         private int _tableVao, _tableVbo, _tableEbo;
         private int _tableTexture;
+        private Matrix4[] _tableLegTransforms;
 
         // Модель
         private ModelLoader _model = new ModelLoader();
@@ -93,25 +94,42 @@ namespace NewtonsCradle
 
                         if (_model.Meshes != null && _model.Meshes.Count > 0)
                         {
-                            for (int i = 0; i < _model.Meshes.Count; i++)
+                            foreach (var mesh in _model.Meshes)
                             {
-                                var mesh = _model.Meshes[i];
-                                if (i < 1)
-                                    mesh.TextureId = woodTableTex;
-                                else if (i == 2)
+                                string name = mesh.SourceMesh?.Name ?? "";
+
+                                if (name.Contains("Column", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Деревянные стойки маятника
                                     mesh.TextureId = woodTex;
-                                else
+                                }
+                                else if (name.Contains("Flor", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Основание
+                                    mesh.TextureId = woodTex;
+                                }
+                                else if (name.Contains("Ball", StringComparison.OrdinalIgnoreCase) ||
+                                         name.Contains("Hook", StringComparison.OrdinalIgnoreCase) ||
+                                         name.Contains("Wire", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Металлические части
                                     mesh.TextureId = metalTex;
+                                }
+                                else
+                                {
+                                    // На всякий случай, чтобы ничего не осталось без текстуры
+                                    mesh.TextureId = metalTex;
+                                }
                             }
                         }
                         else
                         {
-                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей");
+                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей?");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("Переопределение текстуры неуспешно " + ex.Message);
+                        Console.WriteLine("Texture override failed: " + ex.Message);
                     }
 
                     // Камера по центру модели
@@ -127,26 +145,6 @@ namespace NewtonsCradle
 
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
-
-            Console.WriteLine("Mesh list");
-            for (int i = 0; i < _model.Meshes.Count; i++)
-            {
-                var mesh = _model.Meshes[i];
-                string name = mesh.SourceMesh?.Name ?? "(no name)";
-                Console.WriteLine($"[{i}] {name}");
-            }
-
-            Console.WriteLine("Scene nodes");
-            if (_model.Scene?.RootNode != null)
-            {
-                void PrintNodes(Assimp.Node node, string indent)
-                {
-                    Console.WriteLine($"{indent}- {node.Name}");
-                    foreach (var child in node.Children)
-                        PrintNodes(child, indent + "  ");
-                }
-                PrintNodes(_model.Scene.RootNode, "");
-            }
         }
 
         protected override void OnUnload()
@@ -198,14 +196,21 @@ namespace NewtonsCradle
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "projection"), false, ref proj);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "viewPos"), _camera.Position);
 
-            // Стол
+            // Стол и его ножки
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, _tableTexture);
-            var tableModel = Matrix4.CreateScale(33.0f, 3.6f, 44.0f) *
-                             Matrix4.CreateTranslation(0f, -4.3f, -4f);
-            //GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
-            //GL.BindVertexArray(_tableVao);
-            //GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
+            var tableModel = Matrix4.CreateScale(12.0f, 0.65f, 9.0f) *
+                             Matrix4.CreateTranslation(-0.5f, -1.75f, -1.5f);
+            GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref tableModel);
+            GL.BindVertexArray(_tableVao);
+            GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
+            GL.BindTexture(TextureTarget.Texture2D, _tableTexture);
+            GL.BindVertexArray(_tableVao);
+            for (int i = 0; i < _tableLegTransforms.Length; i++)
+            {
+                GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "model"), false, ref _tableLegTransforms[i]);
+                GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
+            }
 
             if (_model.Scene != null)
             {
@@ -282,7 +287,7 @@ namespace NewtonsCradle
         private void CreateTable()
         {
             float[] vertices = {
-                // Позиции              // Нормали // texcoords
+                // Позиции              // Нормали // Текстурные координаты
                 -0.5f,-0.5f,-0.5f,      0,0,-1,     0,0,
                  0.5f,-0.5f,-0.5f,      0,0,-1,     1,0,
                  0.5f, 0.5f,-0.5f,      0,0,-1,     1,1,
@@ -336,6 +341,28 @@ namespace NewtonsCradle
             GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
             GL.EnableVertexAttribArray(2);
             GL.BindVertexArray(0);
+
+            // Матрицы ножек стола
+            _tableLegTransforms = new Matrix4[4];
+
+            float legWidth = 0.4f;
+            float legHeight = 6.5f;
+
+            // Позиции ножек
+            Vector3[] legPositions =
+            {
+                new Vector3(-5.5f, -5f, -5f),
+                new Vector3( 4.5f, -5f, -5f),
+                new Vector3(-5.5f, -5f,  2f),
+                new Vector3( 4.5f, -5f,  2f)
+            };
+
+            for (int i = 0; i < 4; i++)
+            {
+                _tableLegTransforms[i] =
+                    Matrix4.CreateScale(legWidth, legHeight, legWidth) *
+                    Matrix4.CreateTranslation(legPositions[i]);
+            }
         }
 
         // Построить мировые матрицы всех узлов на базе _originalTransforms
