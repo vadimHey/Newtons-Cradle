@@ -39,7 +39,7 @@ namespace NewtonsCradle
         private float _pendulumTime = 0f;
         private const float swingDuration = 1f;
 
-        private Vector3 _lightPos = new Vector3(0.5f, 2.0f, 2.0f);
+        private Vector3 _lightPos = Vector3.Zero;
 
         public SceneRenderer(GameWindowSettings g, NativeWindowSettings n) : base(g, n) { }
 
@@ -237,18 +237,20 @@ namespace NewtonsCradle
             {
                 var lampModel = Matrix4.CreateScale(1f) *
                                 Matrix4.CreateTranslation(-1.3f, -0.7f, 0f);
-
                 var finalTransforms = new Dictionary<string, Matrix4>();
                 foreach (var kv in _localTransformsLamp)
                     finalTransforms[kv.Key] = lampModel * kv.Value;
 
-                int testTex = TextureUtils.LoadTextureStandalone("Assets/images.jpg");
-                foreach (var mesh in _lampModel.Meshes)
-                {
-                    mesh.TextureId = testTex;
+                int testTex = TextureUtils.LoadTextureStandalone("Assets/lamp.jpg"); 
+                foreach (var mesh in _lampModel.Meshes) 
+                { 
+                    mesh.TextureId = testTex; 
                 }
 
-                _lampModel.Draw(_shaderProgram, finalTransforms, 0); // 0 = fallback белая текстура
+                Vector3 lampWorldPos = lampModel.ExtractTranslation();
+                GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), lampWorldPos);
+
+                _lampModel.Draw(_shaderProgram, finalTransforms, 0);
             }
 
             // Модель маятника
@@ -436,14 +438,9 @@ namespace NewtonsCradle
                     {
                         mesh.TextureId = TextureUtils.LoadTextureStandalone(texPath);
                     }
-                    else
-                    {
-                        Console.WriteLine($"Lamp texture not found: {texPath}");
-                    }
                 }
                 else
                 {
-                    // Фоллбек: белая текстура
                     mesh.TextureId = 0;
                 }
             }
