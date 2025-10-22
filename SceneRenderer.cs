@@ -182,9 +182,9 @@ namespace NewtonsCradle
             float zoomSpeed = 5f * (float)e.Time;       
 
             // Управление камерой
-            if (KeyboardState.IsKeyDown(Keys.Q))
-                _camera.RotateLeft(rotationSpeed);
             if (KeyboardState.IsKeyDown(Keys.E))
+                _camera.RotateLeft(rotationSpeed);
+            if (KeyboardState.IsKeyDown(Keys.Q))
                 _camera.RotateRight(rotationSpeed);
 
             if (KeyboardState.IsKeyDown(Keys.Equal))
@@ -247,8 +247,12 @@ namespace NewtonsCradle
                     mesh.TextureId = testTex; 
                 }
 
+                // Обновляем позицию света
                 Vector3 lampWorldPos = lampModel.ExtractTranslation();
                 GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), lampWorldPos);
+
+                // Передаём позицию камеры
+                GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "viewPos"), _camera.Position);
 
                 _lampModel.Draw(_shaderProgram, finalTransforms, 0);
             }
