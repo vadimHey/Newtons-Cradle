@@ -8,19 +8,25 @@ namespace NewtonsCradle
 {
     public class SceneRenderer : GameWindow
     {
-        private OrbitCamera _camera;
         private int _shaderProgram;
+
+        // Камера
+        private OrbitCamera _camera;
 
         // Стол и его ножки
         private int _tableVao, _tableVbo, _tableEbo;
         private int _tableTexture;
         private Matrix4[] _tableLegTransforms;
 
-        // Модель
-        private ModelLoader _model = new ModelLoader();
-        private Dictionary<string, Matrix4> _localTransforms = new();
+        // Модель лампы
+        private ModelLoader _lampModel;
+        private Dictionary<string, Matrix4> _originalTransformsLamp = new();
+        private Dictionary<string, Matrix4> _localTransformsLamp = new();
 
-        private bool _localTransformsBuilt = false;
+        // Модель маятника
+        private ModelLoader _cradleModel = new ModelLoader();
+        private Dictionary<string, Matrix4> _modelLocalTransforms = new();
+        private bool _localTransformsCradle = false;
         private bool _animationRunning = false;
 
         // Сохраняем исходные матрицы всех узлов модели
@@ -43,7 +49,7 @@ namespace NewtonsCradle
             GL.ClearColor(0.85f, 0.9f, 0.95f, 1.0f);
             GL.Enable(EnableCap.DepthTest);
 
-            _camera = new OrbitCamera(Vector3.Zero, 2f, Size.X / (float)Size.Y, 7f);
+            _camera = new OrbitCamera(Vector3.Zero, 2f, Size.X / (float)Size.Y, 10f);
 
             // Шейдер
             _shaderProgram = ShaderUtils.CreateProgram("Shaders/vertex.glsl", "Shaders/fragment.glsl");
@@ -53,6 +59,9 @@ namespace NewtonsCradle
             CreateTable();
             _tableTexture = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
 
+            // Лампа
+            LoadLampModelOnTable("Assets/lamp.glb");
+
             // Загрузка модели
             string modelPath = Path.Combine("Assets", "newtons_cradle.glb");
             if (!File.Exists(modelPath))
@@ -61,9 +70,9 @@ namespace NewtonsCradle
             }
             else
             {
-                _model.LoadFromFile(modelPath);
+                _cradleModel.LoadFromFile(modelPath);
 
-                if (_model.Scene != null)
+                if (_cradleModel.Scene != null)
                 {
                     var world = BuildWorldTransformsFromOriginal();
                     foreach (var name in new[]
@@ -77,13 +86,13 @@ namespace NewtonsCradle
                     }
 
                     // Локальные трансформы
-                    _model.BuildLocalTransforms(_model.Scene.RootNode, _localTransforms);
-                    foreach (var kv in _localTransforms)
+                    _cradleModel.BuildLocalTransforms(_cradleModel.Scene.RootNode, _modelLocalTransforms);
+                    foreach (var kv in _modelLocalTransforms)
                     {
                         _originalTransforms[kv.Key] = kv.Value;
-                        _localTransforms[kv.Key] = kv.Value;
+                        _modelLocalTransforms[kv.Key] = kv.Value;
                     }
-                    _localTransformsBuilt = true;
+                    _localTransformsCradle = true;
 
                     // Подмена текстур по названию мешей
                     try
@@ -92,9 +101,9 @@ namespace NewtonsCradle
                         int woodTableTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
                         int metalTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "metal.jpg"));
 
-                        if (_model.Meshes != null && _model.Meshes.Count > 0)
+                        if (_cradleModel.Meshes != null && _cradleModel.Meshes.Count > 0)
                         {
-                            foreach (var mesh in _model.Meshes)
+                            foreach (var mesh in _cradleModel.Meshes)
                             {
                                 string name = mesh.SourceMesh?.Name ?? "";
 
@@ -133,7 +142,7 @@ namespace NewtonsCradle
                     }
 
                     // Камера по центру модели
-                    if (_model.GetBoundingBoxWorld(out var bboxMin, out var bboxMax))
+                    if (_cradleModel.GetBoundingBoxWorld(out var bboxMin, out var bboxMax))
                     {
                         var center = (bboxMin + bboxMax) * 0.5f;
                         var diag = (bboxMax - bboxMin).Length;
@@ -153,7 +162,8 @@ namespace NewtonsCradle
             GL.DeleteProgram(_shaderProgram);
             GL.DeleteVertexArray(_tableVao);
             GL.DeleteTexture(_tableTexture);
-            _model.Delete();
+            _lampModel.Delete();
+            _cradleModel.Delete();
         }
 
         protected override void OnResize(ResizeEventArgs e)
@@ -222,7 +232,27 @@ namespace NewtonsCradle
                 GL.DrawElements(PrimitiveType.Triangles, 36, DrawElementsType.UnsignedInt, 0);
             }
 
-            if (_model.Scene != null)
+            // Модель лампы
+            if (_lampModel != null && _lampModel.Scene != null)
+            {
+                var lampModel = Matrix4.CreateScale(1f) *
+                                Matrix4.CreateTranslation(-1.3f, -0.7f, 0f);
+
+                var finalTransforms = new Dictionary<string, Matrix4>();
+                foreach (var kv in _localTransformsLamp)
+                    finalTransforms[kv.Key] = lampModel * kv.Value;
+
+                int testTex = TextureUtils.LoadTextureStandalone("Assets/images.jpg");
+                foreach (var mesh in _lampModel.Meshes)
+                {
+                    mesh.TextureId = testTex;
+                }
+
+                _lampModel.Draw(_shaderProgram, finalTransforms, 0); // 0 = fallback белая текстура
+            }
+
+            // Модель маятника
+            if (_cradleModel.Scene != null)
             {
                 // Обновление таймера и вычисление angle
                 if (_animationRunning)
@@ -258,8 +288,8 @@ namespace NewtonsCradle
                     new[] { "polySurface20_Hook_0", "polySurface1_Ball_0", "polySurface6_Wire_0" },
                 };
 
-                foreach (var kv in _originalTransforms) 
-                    _localTransforms[kv.Key] = kv.Value;
+                foreach (var kv in _originalTransforms)
+                    _modelLocalTransforms[kv.Key] = kv.Value;
 
                 var worldTransforms = BuildWorldTransformsFromOriginal();
 
@@ -283,12 +313,12 @@ namespace NewtonsCradle
                                 Matrix4.CreateFromAxisAngle(Vector3.UnitZ, localAngle) *
                                 Matrix4.CreateTranslation(pivotWorld);
 
-                            _localTransforms[nodeName] = rotation * baseMatrix;
+                            _modelLocalTransforms[nodeName] = rotation * baseMatrix;
                         }
                     }
                 }
 
-                _model.Draw(_shaderProgram, _localTransforms, 0);
+                _cradleModel.Draw(_shaderProgram, _modelLocalTransforms, 0);
             }
 
             SwapBuffers();
@@ -375,11 +405,55 @@ namespace NewtonsCradle
             }
         }
 
+        private void LoadLampModelOnTable(string path)
+        {
+            if (!File.Exists(path))
+            {
+                Console.WriteLine("Lamp model not found: " + path);
+                return;
+            }
+
+            _lampModel = new ModelLoader();
+            _lampModel.LoadFromFile(path);
+
+            // Сохраняем оригинальные локальные трансформы
+            _lampModel.BuildLocalTransforms(_lampModel.Scene.RootNode, _localTransformsLamp);
+            foreach (var kv in _localTransformsLamp)
+                _originalTransformsLamp[kv.Key] = kv.Value;
+
+            // Загружаем текстуры для каждого меша, если они есть
+            foreach (var mesh in _lampModel.Meshes)
+            {
+                if (mesh.TextureId != 0) continue; // уже загружено
+
+                var mat = _lampModel.Scene.Materials[mesh.SourceMesh.MaterialIndex];
+
+                if (mat.HasTextureDiffuse)
+                {
+                    // Путь к текстуре относительно папки Assets
+                    string texPath = Path.Combine("Assets", mat.TextureDiffuse.FilePath.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(texPath))
+                    {
+                        mesh.TextureId = TextureUtils.LoadTextureStandalone(texPath);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Lamp texture not found: {texPath}");
+                    }
+                }
+                else
+                {
+                    // Фоллбек: белая текстура
+                    mesh.TextureId = 0;
+                }
+            }
+        }
+
         // Построить мировые матрицы всех узлов на базе _originalTransforms
         private Dictionary<string, Matrix4> BuildWorldTransformsFromOriginal()
         {
             var world = new Dictionary<string, Matrix4>();
-            if (_model?.Scene?.RootNode == null) return world;
+            if (_cradleModel?.Scene?.RootNode == null) return world;
 
             void Walk(Assimp.Node node, Matrix4 parentWorld)
             {
@@ -401,14 +475,14 @@ namespace NewtonsCradle
                 foreach (var ch in node.Children) Walk(ch, curWorld);
             }
 
-            Walk(_model.Scene.RootNode, Matrix4.Identity);
+            Walk(_cradleModel.Scene.RootNode, Matrix4.Identity);
             return world;
         }
 
         // Для заданного узла вычислить pivot как среднюю позицию вершин мешей этого узла
         private Vector3 ComputeNodePivotWorld(string nodeName, Dictionary<string, Matrix4> worldTransforms)
         {
-            var scene = _model.Scene;
+            var scene = _cradleModel.Scene;
             if (scene == null || scene.RootNode == null) return Vector3.Zero;
             Assimp.Node node = FindNodeByName(scene.RootNode, nodeName);
             if (node == null)
