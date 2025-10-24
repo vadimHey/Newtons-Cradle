@@ -39,7 +39,13 @@ namespace NewtonsCradle
         private float _pendulumTime = 0f;
         private const float swingDuration = 1f;
 
-        private Vector3 _lightPos = Vector3.Zero;
+        private Vector3 _lightPos = new Vector3(-2.0f, 4.0f, 1.5f);
+
+        private int _depthMapFBO;
+        private int _depthMap;
+        private int _shadowShaderProgram;
+        private const int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
+        private Matrix4 _lightSpaceMatrix;
 
         public SceneRenderer(GameWindowSettings g, NativeWindowSettings n) : base(g, n) { }
 
@@ -152,6 +158,30 @@ namespace NewtonsCradle
                 }
             }
 
+            _depthMapFBO = GL.GenFramebuffer();
+            _depthMap = GL.GenTexture();
+
+            GL.BindTexture(TextureTarget.Texture2D, _depthMap);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.DepthComponent,
+                SHADOW_WIDTH, SHADOW_HEIGHT, 0, PixelFormat.DepthComponent, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToBorder);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToBorder);
+            float[] borderColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBorderColor, borderColor);
+
+            _depthMapFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _depthMapFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment,
+                TextureTarget.Texture2D, _depthMap, 0);
+            GL.DrawBuffer(DrawBufferMode.None);
+            GL.ReadBuffer(ReadBufferMode.None);
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            // Загружаем шейдер для рендера глубины
+            _shadowShaderProgram = ShaderUtils.CreateProgram("Shaders/vertexShadow.glsl", "Shaders/fragmentShadow.glsl");
+
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
         }
@@ -178,8 +208,8 @@ namespace NewtonsCradle
             base.OnUpdateFrame(e);
 
             // Скорости вращения и приближения камеры
-            float rotationSpeed = 90f * (float)e.Time;  
-            float zoomSpeed = 5f * (float)e.Time;       
+            float rotationSpeed = 90f * (float)e.Time;
+            float zoomSpeed = 5f * (float)e.Time;
 
             // Управление камерой
             if (KeyboardState.IsKeyDown(Keys.E))
@@ -205,6 +235,25 @@ namespace NewtonsCradle
         protected override void OnRenderFrame(FrameEventArgs e)
         {
             base.OnRenderFrame(e);
+
+            // Матрица света (лампа направлена на маятник)
+            Matrix4 lightProjection = Matrix4.CreateOrthographic(10f, 10f, 1f, 20f);
+            Matrix4 lightView = Matrix4.LookAt(_lightPos, Vector3.Zero, Vector3.UnitY);
+            _lightSpaceMatrix = lightView * lightProjection;
+
+            // Настройка буфера для теней
+            GL.Viewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _depthMapFBO);
+            GL.Clear(ClearBufferMask.DepthBufferBit);
+
+            // Используем шейдер теней
+            GL.UseProgram(_shadowShaderProgram);
+            GL.UniformMatrix4(GL.GetUniformLocation(_shadowShaderProgram, "lightSpaceMatrix"), false, ref _lightSpaceMatrix);
+            DrawSceneDepthOnly();
+
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            GL.Viewport(0, 0, Size.X, Size.Y);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
             GL.UseProgram(_shaderProgram);
@@ -215,6 +264,15 @@ namespace NewtonsCradle
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "view"), false, ref view);
             GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "projection"), false, ref proj);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "viewPos"), _camera.Position);
+
+            // Позиция света и матрица света
+            GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), _lightPos);
+            GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "lightSpaceMatrix"), false, ref _lightSpaceMatrix);
+
+            // Активируем shadow map
+            GL.ActiveTexture(TextureUnit.Texture1);
+            GL.BindTexture(TextureTarget.Texture2D, _depthMap);
+            GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "shadowMap"), 1);
 
             // Стол и его ножки
             GL.ActiveTexture(TextureUnit.Texture0);
@@ -235,16 +293,15 @@ namespace NewtonsCradle
             // Модель лампы
             if (_lampModel != null && _lampModel.Scene != null)
             {
-                var lampModel = Matrix4.CreateScale(1f) *
-                                Matrix4.CreateTranslation(-1.3f, -0.7f, 0f);
+                var lampModel = Matrix4.CreateTranslation(-1.3f, -0.7f, 0f);
                 var finalTransforms = new Dictionary<string, Matrix4>();
                 foreach (var kv in _localTransformsLamp)
                     finalTransforms[kv.Key] = lampModel * kv.Value;
 
-                int testTex = TextureUtils.LoadTextureStandalone("Assets/lamp.jpg"); 
-                foreach (var mesh in _lampModel.Meshes) 
-                { 
-                    mesh.TextureId = testTex; 
+                int testTex = TextureUtils.LoadTextureStandalone("Assets/lamp.jpg");
+                foreach (var mesh in _lampModel.Meshes)
+                {
+                    mesh.TextureId = testTex;
                 }
 
                 // Обновляем позицию света
@@ -264,10 +321,10 @@ namespace NewtonsCradle
                 if (_animationRunning)
                     _pendulumTime += (float)e.Time;
 
-                if (_pendulumTime > swingDuration) 
-                { 
-                    _pendulumTime = 0f; 
-                    _activePendulum = 1 - _activePendulum; 
+                if (_pendulumTime > swingDuration)
+                {
+                    _pendulumTime = 0f;
+                    _activePendulum = 1 - _activePendulum;
                 }
 
                 float t = _pendulumTime / swingDuration;
@@ -276,13 +333,13 @@ namespace NewtonsCradle
                 float baseAngle = 0.3f;
 
                 float[] angles = new float[5];
-                if (_activePendulum == 0) 
-                    angles[0] = baseAngle * swingFactor; 
-                else 
+                if (_activePendulum == 0)
+                    angles[0] = baseAngle * swingFactor;
+                else
                     angles[4] = -baseAngle * swingFactor;
 
-                angles[1] = MathF.Sin(t * MathF.PI) * 0.05f; 
-                angles[2] = MathF.Sin(t * MathF.PI) * 0.03f; 
+                angles[1] = MathF.Sin(t * MathF.PI) * 0.05f;
+                angles[2] = MathF.Sin(t * MathF.PI) * 0.03f;
                 angles[3] = -MathF.Sin(t * MathF.PI) * 0.05f;
 
                 string[][] pendulums =
@@ -303,7 +360,7 @@ namespace NewtonsCradle
                 for (int p = 0; p < pendulums.Length; p++)
                 {
                     float localAngle = angles[p];
-                    if (MathF.Abs(localAngle) < 1e-5f) 
+                    if (MathF.Abs(localAngle) < 1e-5f)
                         continue;
 
                     string hookNodeName = pendulums[p][0];
@@ -529,6 +586,14 @@ namespace NewtonsCradle
                 if (r != null) return r;
             }
             return null;
+        }
+
+        private void DrawSceneDepthOnly()
+        {
+            if (_cradleModel?.Scene != null)
+            {
+                _cradleModel.Draw(_shadowShaderProgram, _modelLocalTransforms, 0);
+            }
         }
     }
 }
