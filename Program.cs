@@ -14,7 +14,7 @@ class Program
             Title = "Маятник Ньютона на столе" 
         };
 
-        var window = new SceneRenderer(gws, nws);
+        var window = new MainWindow(gws, nws);
         window.Run();
     }
 }

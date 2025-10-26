@@ -6,7 +6,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace NewtonsCradle
 {
-    public class SceneRenderer : GameWindow
+    public class MainWindow : GameWindow
     {
         private int _shaderProgram;
 
@@ -47,7 +47,7 @@ namespace NewtonsCradle
         private const int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
         private Matrix4 _lightSpaceMatrix;
 
-        public SceneRenderer(GameWindowSettings g, NativeWindowSettings n) : base(g, n) { }
+        public MainWindow(GameWindowSettings gws, NativeWindowSettings nws) : base(gws, nws) { }
 
         protected override void OnLoad()
         {
@@ -66,13 +66,13 @@ namespace NewtonsCradle
             _tableTexture = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
 
             // Лампа
-            LoadLampModelOnTable("Assets/lamp.glb");
+            LoadLampModel("Assets/lamp.glb");
 
-            // Загрузка модели
+            // Маятник
             string modelPath = Path.Combine("Assets", "newtons_cradle.glb");
             if (!File.Exists(modelPath))
             {
-                Console.WriteLine("Model not found: " + modelPath);
+                Console.WriteLine("Модель не найдена: " + modelPath);
             }
             else
             {
@@ -91,7 +91,6 @@ namespace NewtonsCradle
                         _pivotWorlds[name] = ComputeNodePivotWorld(name, world);
                     }
 
-                    // Локальные трансформы
                     _cradleModel.BuildLocalTransforms(_cradleModel.Scene.RootNode, _modelLocalTransforms);
                     foreach (var kv in _modelLocalTransforms)
                     {
@@ -100,11 +99,9 @@ namespace NewtonsCradle
                     }
                     _localTransformsCradle = true;
 
-                    // Подмена текстур по названию мешей
                     try
                     {
                         int woodTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "wood.jpg"));
-                        int woodTableTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "woodTable.jpg"));
                         int metalTex = TextureUtils.LoadTextureStandalone(Path.Combine("Assets", "metal.jpg"));
 
                         if (_cradleModel.Meshes != null && _cradleModel.Meshes.Count > 0)
@@ -132,19 +129,18 @@ namespace NewtonsCradle
                                 }
                                 else
                                 {
-                                    // На всякий случай, чтобы ничего не осталось без текстуры
                                     mesh.TextureId = metalTex;
                                 }
                             }
                         }
                         else
                         {
-                            Console.WriteLine("_model.Meshes пуст — возможно, модель не содержит мешей?");
+                            Console.WriteLine("Модель не содержит мешей");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("Texture override failed: " + ex.Message);
+                        Console.WriteLine("Переопределение текстуры неуспешно: " + ex.Message);
                     }
 
                     // Камера по центру модели
@@ -236,7 +232,7 @@ namespace NewtonsCradle
         {
             base.OnRenderFrame(e);
 
-            // Матрица света (лампа направлена на маятник)
+            // Матрица света 
             Matrix4 lightProjection = Matrix4.CreateOrthographic(10f, 10f, 1f, 20f);
             Matrix4 lightView = Matrix4.LookAt(_lightPos, Vector3.Zero, Vector3.UnitY);
             _lightSpaceMatrix = lightView * lightProjection;
@@ -468,11 +464,11 @@ namespace NewtonsCradle
             }
         }
 
-        private void LoadLampModelOnTable(string path)
+        private void LoadLampModel(string path)
         {
             if (!File.Exists(path))
             {
-                Console.WriteLine("Lamp model not found: " + path);
+                Console.WriteLine("Модель лампы не найдена: " + path);
                 return;
             }
 
@@ -487,7 +483,7 @@ namespace NewtonsCradle
             // Загружаем текстуры для каждого меша, если они есть
             foreach (var mesh in _lampModel.Meshes)
             {
-                if (mesh.TextureId != 0) continue; // уже загружено
+                if (mesh.TextureId != 0) continue;
 
                 var mat = _lampModel.Scene.Materials[mesh.SourceMesh.MaterialIndex];
 

@@ -1,9 +1,7 @@
 ﻿using Assimp;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
-using System.Drawing;
-
-using OTQuat = OpenTK.Mathematics.Quaternion;
+using PrimitiveType = OpenTK.Graphics.OpenGL4.PrimitiveType;
 
 namespace NewtonsCradle
 {
@@ -11,7 +9,6 @@ namespace NewtonsCradle
     public class ModelLoader
     {
         public Assimp.Scene Scene { get; private set; }
-        // Список всех OpenGL-мешей
         private readonly List<MeshGL> _meshes = new();
 
         public IReadOnlyList<MeshGL> Meshes => _meshes;
@@ -37,41 +34,11 @@ namespace NewtonsCradle
             }
         }
 
-        // Заполнить словарь локальных трансформов (nodeName -> local matrix)
+        // Заполнить словарь локальных трансформов
         public void BuildLocalTransforms(Node node, Dictionary<string, Matrix4> outDict)
         {
             outDict[node.Name] = ToMatrix4(node.Transform);
             foreach (var ch in node.Children) BuildLocalTransforms(ch, outDict);
-        }
-
-        // Применить анимацию (если есть)
-        public void ApplyAnimation(double animTimeSec, Dictionary<string, Matrix4> localDict)
-        {
-            if (Scene == null || !Scene.HasAnimations) return;
-            var anim = Scene.Animations[0];
-            double ticksPerSec = anim.TicksPerSecond;
-            if (ticksPerSec == 0) ticksPerSec = 25.0;
-            double t = animTimeSec * ticksPerSec;
-            double animTicks = anim.DurationInTicks;
-            if (animTicks <= 0) animTicks = 1.0;
-            double localTime = t % animTicks;
-
-            foreach (var ch in anim.NodeAnimationChannels)
-            {
-                var nodeName = ch.NodeName;
-                var pos = InterpVectorKeys(ch.PositionKeys, localTime);
-                var rot = InterpQuatKeys(ch.RotationKeys, localTime);
-                var scl = InterpVectorKeys(ch.ScalingKeys, localTime);
-
-                var transM = Matrix4.CreateTranslation((float)pos.X, (float)pos.Y, (float)pos.Z);
-                // Явно используем OpenTK.Quat (OTQuat) — чтобы не путать с Assimp.Quaternion
-                var q = new OTQuat((float)rot.X, (float)rot.Y, (float)rot.Z, (float)rot.W);
-                var rotM = Matrix4.CreateFromQuaternion(q);
-                var scaleM = Matrix4.CreateScale((float)scl.X, (float)scl.Y, (float)scl.Z);
-
-                // порядок: translation * rotation * scale
-                localDict[nodeName] = transM * rotM * scaleM;
-            }
         }
 
         public void Draw(int shaderProgram, Dictionary<string, Matrix4> localTransforms, int fallbackTexture)
@@ -104,8 +71,7 @@ namespace NewtonsCradle
                     }
 
                     GL.BindVertexArray(mg.Vao);
-                    // Явно указываем OpenTK.Graphics.OpenGL4.PrimitiveType, чтобы не было конфликта с Assimp.PrimitiveType
-                    GL.DrawElements(OpenTK.Graphics.OpenGL4.PrimitiveType.Triangles, mg.IndexCount, DrawElementsType.UnsignedInt, 0);
+                    GL.DrawElements(PrimitiveType.Triangles, mg.IndexCount, DrawElementsType.UnsignedInt, 0);
                 }
             }
 
@@ -118,8 +84,6 @@ namespace NewtonsCradle
             _meshes.Clear();
         }
 
-        #region Helpers: conversion & interpolation
-
         static Matrix4 ToMatrix4(Assimp.Matrix4x4 m) => new Matrix4(
             m.A1, m.B1, m.C1, m.D1,
             m.A2, m.B2, m.C2, m.D2,
@@ -127,74 +91,41 @@ namespace NewtonsCradle
             m.A4, m.B4, m.C4, m.D4
         );
 
-        static Assimp.Vector3D InterpVectorKeys(List<Assimp.VectorKey> keys, double time)
-        {
-            if (keys == null || keys.Count == 0) return new Assimp.Vector3D();
-            if (keys.Count == 1) return keys[0].Value;
-            int idx = 0;
-            while (idx < keys.Count - 1 && keys[idx + 1].Time <= time) idx++;
-            int next = Math.Min(idx + 1, keys.Count - 1);
-            if (idx == next) return keys[idx].Value;
-            double t0 = keys[idx].Time, t1 = keys[next].Time;
-            double f = (time - t0) / (t1 - t0);
-            var a = keys[idx].Value; var b = keys[next].Value;
-            return a + (b - a) * (float)f;
-        }
-
-        static Assimp.Quaternion InterpQuatKeys(List<Assimp.QuaternionKey> keys, double time)
-        {
-            if (keys == null || keys.Count == 0) return new Assimp.Quaternion(1, 0, 0, 0);
-            if (keys.Count == 1) return keys[0].Value;
-            int idx = 0;
-            while (idx < keys.Count - 1 && keys[idx + 1].Time <= time) idx++;
-            int next = Math.Min(idx + 1, keys.Count - 1);
-            if (idx == next) return keys[idx].Value;
-            double t0 = keys[idx].Time, t1 = keys[next].Time;
-            double f = (time - t0) / (t1 - t0);
-            var a = keys[idx].Value; var b = keys[next].Value;
-            return Assimp.Quaternion.Slerp(a, b, (float)f);
-        }
-
         /// <summary>
-        /// Вычисляет AABB модели с учётом трансформаций узлов (world transforms).
-        /// Возвращает true, если удалось найти вершины (mesh count > 0).
+        /// Вычисляет AABB модели с учётом трансформаций узлов
+        /// Возвращает true, если удалось найти вершины
         /// </summary>
-        public bool GetBoundingBoxWorld(out OpenTK.Mathematics.Vector3 minOut, out OpenTK.Mathematics.Vector3 maxOut)
+        public bool GetBoundingBoxWorld(out Vector3 minOut, out Vector3 maxOut)
         {
-            minOut = new OpenTK.Mathematics.Vector3(float.MaxValue);
-            maxOut = new OpenTK.Mathematics.Vector3(float.MinValue);
+            minOut = new Vector3(float.MaxValue);
+            maxOut = new Vector3(float.MinValue);
 
             if (Scene == null || Scene.RootNode == null) return false;
 
-            // Сначала соберём локальные матрицы всех узлов
-            var localDict = new Dictionary<string, OpenTK.Mathematics.Matrix4>();
+            var localDict = new Dictionary<string, Matrix4>();
             BuildLocalTransforms(Scene.RootNode, localDict);
 
-            // Рекурсивно пройдёмся по узлам и вычислим мировые матрицы
             bool anyVertex = false;
 
-            // Локальные переменные для min/max, чтобы избежать ошибки CS1628
-            var min = new OpenTK.Mathematics.Vector3(float.MaxValue);
-            var max = new OpenTK.Mathematics.Vector3(float.MinValue);
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
 
-            void Walk(Node node, OpenTK.Mathematics.Matrix4 parentWorld)
+            void Walk(Node node, Matrix4 parentWorld)
             {
-                OpenTK.Mathematics.Matrix4 local = localDict.ContainsKey(node.Name) ? localDict[node.Name] : ToMatrix4(node.Transform);
-                OpenTK.Mathematics.Matrix4 world = parentWorld * local;
+                Matrix4 local = localDict.ContainsKey(node.Name) ? localDict[node.Name] : ToMatrix4(node.Transform);
+                Matrix4 world = parentWorld * local;
 
-                // для каждого меша этого узла трансформируем вершины
                 foreach (int mi in node.MeshIndices)
                 {
                     if (mi < 0 || mi >= Scene.MeshCount) continue;
                     var mesh = Scene.Meshes[mi];
                     for (int vi = 0; vi < mesh.VertexCount; vi++)
                     {
-                        var v = mesh.Vertices[vi]; // Assimp.Vector3D
-                        var v4 = new OpenTK.Mathematics.Vector4((float)v.X, (float)v.Y, (float)v.Z, 1.0f);
-                        var vt = OpenTK.Mathematics.Vector4.TransformRow(v4, world);
-                        var vt3 = new OpenTK.Mathematics.Vector3(vt.X, vt.Y, vt.Z);
+                        var v = mesh.Vertices[vi]; 
+                        var v4 = new Vector4((float)v.X, (float)v.Y, (float)v.Z, 1.0f);
+                        var vt = Vector4.TransformRow(v4, world);
+                        var vt3 = new Vector3(vt.X, vt.Y, vt.Z);
 
-                        // обновляем min/max
                         min.X = Math.Min(min.X, vt3.X);
                         min.Y = Math.Min(min.Y, vt3.Y);
                         min.Z = Math.Min(min.Z, vt3.Z);
@@ -209,18 +140,15 @@ namespace NewtonsCradle
                 foreach (var ch in node.Children) Walk(ch, world);
             }
 
-            Walk(Scene.RootNode, OpenTK.Mathematics.Matrix4.Identity);
+            Walk(Scene.RootNode, Matrix4.Identity);
 
-            // Копируем значения из локальных переменных в out-параметры
             minOut = min;
             maxOut = max;
 
             return anyVertex;
         }
     }
-    #endregion
 
-    #region Nested MeshGL
     public class MeshGL
     {
         public int Vao;
@@ -300,14 +228,12 @@ namespace NewtonsCradle
                         TextureSlot slot;
                         bool found = false;
 
-                        // 1️⃣ Diffuse — классический путь
                         if (mat.GetMaterialTextureCount(TextureType.Diffuse) > 0)
                         {
                             mat.GetMaterialTexture(TextureType.Diffuse, 0, out slot);
                             found = true;
                         }
-                        // 2️⃣ PBR пути (glTF и др.)
-                        else if (mat.GetMaterialTextureCount((TextureType)12) > 0) // 12 = BaseColor для glTF
+                        else if (mat.GetMaterialTextureCount((TextureType)12) > 0) 
                         {
                             mat.GetMaterialTexture((TextureType)12, 0, out slot);
                             found = true;
@@ -319,7 +245,7 @@ namespace NewtonsCradle
                         }
                         else
                         {
-                            slot = new TextureSlot(); // пустой
+                            slot = new TextureSlot(); 
                         }
 
                         if (found)
@@ -350,14 +276,14 @@ namespace NewtonsCradle
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("Texture load error: " + ex.Message);
+                        Console.WriteLine("Ошибка загрузки текстуры: " + ex.Message);
                     }
 
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Texture load error for mesh: " + ex.Message);
+                Console.WriteLine("Ошибка загрузки текстуры для меша: " + ex.Message);
             }
         }
 
@@ -369,5 +295,4 @@ namespace NewtonsCradle
             if (TextureId != 0) GL.DeleteTexture(TextureId);
         }
     }
-    #endregion
 }
