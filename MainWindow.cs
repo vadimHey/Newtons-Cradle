@@ -1,15 +1,16 @@
-﻿using NewtonsCradle.Models;
-using NewtonsCradle.Utils;
-using OpenTK.Graphics.OpenGL4;
+﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
+using NewtonsCradle.Models;
+
 namespace NewtonsCradle
 {
     public class MainWindow : GameWindow
     {
+        // Шейдерные программы
         private int _shaderProgram;
         private int _shadowShaderProgram;
 
@@ -21,12 +22,11 @@ namespace NewtonsCradle
         private CradleModel _cradle;
         private LampModel _lamp;
 
+        // Позиция светв
         private Vector3 _lightPosition = new Vector3(-2.0f, 4.0f, 1.5f);
 
-        private int _depthMapFBO;
-        private int _depthMap;
-        private const int SHADOW_WIDTH = 2048, SHADOW_HEIGHT = 2048;
-        private Matrix4 _lightSpaceMatrix;
+        // Создание теней
+        private ShadowMap _shadowMap;
 
         public MainWindow(GameWindowSettings gws, NativeWindowSettings nws) : base(gws, nws) { }
 
@@ -58,24 +58,7 @@ namespace NewtonsCradle
             _lamp.Load("Assets/lamp.glb");
 
             // Настройка буфера теней
-            _depthMapFBO = GL.GenFramebuffer();
-            _depthMap = GL.GenTexture();
-
-            GL.BindTexture(TextureTarget.Texture2D, _depthMap);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.DepthComponent,
-                SHADOW_WIDTH, SHADOW_HEIGHT, 0, PixelFormat.DepthComponent, PixelType.Float, IntPtr.Zero);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToBorder);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToBorder);
-            float[] borderColor = { 1, 1, 1, 1 };
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBorderColor, borderColor);
-
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _depthMapFBO);
-            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, _depthMap, 0);
-            GL.DrawBuffer(DrawBufferMode.None);
-            GL.ReadBuffer(ReadBufferMode.None);
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            _shadowMap = new ShadowMap();
 
             // Передача шейдеру текстуру и свет
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "texture0"), 0);
@@ -123,22 +106,15 @@ namespace NewtonsCradle
             base.OnRenderFrame(e);
 
             // Матрица света 
-            Matrix4 lightProjection = Matrix4.CreateOrthographic(10f, 10f, 1f, 20f);
-            Matrix4 lightView = Matrix4.LookAt(_lightPosition, Vector3.Zero, Vector3.UnitY);
-            _lightSpaceMatrix = lightView * lightProjection;
+            _shadowMap.BeginRender(_lightPosition);
 
-            // Настройка буфера для теней
-            GL.Viewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _depthMapFBO);
-            GL.Clear(ClearBufferMask.DepthBufferBit);
-
-            // Используем шейдер теней
             GL.UseProgram(_shadowShaderProgram);
-            GL.UniformMatrix4(GL.GetUniformLocation(_shadowShaderProgram, "lightSpaceMatrix"), false, ref _lightSpaceMatrix);
+            var lightMatrix = _shadowMap.LightSpaceMatrix;
+            GL.UniformMatrix4(GL.GetUniformLocation(_shadowShaderProgram, "lightSpaceMatrix"), false, ref lightMatrix);
 
             _cradle.Draw(_shadowShaderProgram);
 
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            _shadowMap.EndRender(Size.X, Size.Y);
 
             GL.Viewport(0, 0, Size.X, Size.Y);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
@@ -154,15 +130,15 @@ namespace NewtonsCradle
 
             // Активируем shadow map
             GL.ActiveTexture(TextureUnit.Texture1);
-            GL.BindTexture(TextureTarget.Texture2D, _depthMap);
+            GL.BindTexture(TextureTarget.Texture2D, _shadowMap.DepthMap);
             GL.Uniform1(GL.GetUniformLocation(_shaderProgram, "shadowMap"), 1);
 
             // Позиция света и матрица света
             Vector3 lampPos = new Vector3(-1.3f, -0.7f, 0f);
             GL.Uniform3(GL.GetUniformLocation(_shaderProgram, "lightPos"), lampPos);
-            GL.UniformMatrix4(GL.GetUniformLocation(_shaderProgram, "lightSpaceMatrix"), false, ref _lightSpaceMatrix);
+            GL.UniformMatrix4(GL.GetUniformLocation(_shadowShaderProgram, "lightSpaceMatrix"), false, ref lightMatrix);
 
-            // Модели стола и маятника
+            // Модели лампы, стола и маятника
             _lamp.Draw(_shaderProgram, lampPos);
             _table.Draw(_shaderProgram);
             _cradle.Draw(_shaderProgram);
@@ -179,6 +155,7 @@ namespace NewtonsCradle
             GL.DeleteTexture(_table.TextureId);
             _cradle.Model.Delete();
             _lamp.Model.Delete();
+            _shadowMap.Delete();
         }
     }
 }
