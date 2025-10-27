@@ -16,7 +16,7 @@
   <ItemGroup>
 	<None Include="Shaders\*.glsl">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
+	</None> 
 	<Content Include="Assets\**\*.*">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
