@@ -17,4 +17,4 @@ class Program
         var window = new MainWindow(gws, nws);
         window.Run();
     }
-}
+} 
